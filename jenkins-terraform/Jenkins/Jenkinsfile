@@ -1,0 +1,90 @@
+pipeline {
+    agent any
+
+    parameters {
+        booleanParam(name: 'Apply', defaultValue: false, description: 'Automatically run apply after manual approval?')
+        booleanParam(name: 'Destroy', defaultValue: false, description: 'Destroy Terraform build?')
+
+    }
+
+
+    stages {
+        stage('Checkout') {
+            steps {
+            checkout([$class: 'GitSCM', branches: [[name: '*/main']], extensions: [], userRemoteConfigs: [[url: 'https://github.com/dallisonlima/jenkins-terraform']]])            
+
+          }
+        }
+
+        stage('Init'){
+            when{
+                not{
+                    equals expected: true, actual: params.Destroy
+                }
+            }
+
+            steps{
+                sh 'ls -la'
+                sh 'terraform init -input=false -backend-config="key=states/terraform.tfstate"'
+            }
+            
+        }
+
+        stage('Plan') {
+            when {
+                not {
+                    equals expected: true, actual: params.Destroy
+                }
+            }
+            
+            steps {
+                sh 'ls -la'
+                sh 'terraform plan -input=false -out=tfplan'
+                sh 'terraform show -no-color tfplan > tfplan.txt' 
+                sh 'aws s3 cp ./tfplan.txt s3://dallison-state-terraform/last-tfplan/' 
+            }
+        }
+
+        // stage('Approval') {
+        //     steps {
+        //         script {
+        //             def test = params.Destroy
+        //             if (test == true) {
+        //                 script {
+        //                     def userInput = input(id: 'Confirm', message: 'Deseja fazer o destroy do terraform?', parameters: [ [$class: 'BooleanParameterDefinition', defaultValue: false, description: 'Destroy terraform', name: 'Confirm'] ])
+        //                 }
+        //             } else {
+        //                 script {
+        //                     def plan = readFile 'tfplan.txt'
+        //                     input message: "Do you want to Apply",
+        //                     parameters: [string(name: 'Plan', description: 'Please review the plan', defaultValue: plan)]
+        //                 }
+        //             }
+        //         }
+        //     }
+        // }
+        
+        stage('Apply') {
+            when {
+                not {
+                    equals expected: true, actual: params.Destroy
+                }
+            }
+            
+            steps {
+                sh "terraform apply -input=false tfplan"
+            }
+        }
+        
+        stage('Destroy') {
+            when {
+                equals expected: true, actual: params.Destroy
+            }
+        
+        steps {
+           sh "terraform destroy --auto-approve"
+        }
+    }
+
+  }
+}
